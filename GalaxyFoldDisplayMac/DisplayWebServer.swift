@@ -1,5 +1,6 @@
 @preconcurrency import Foundation
 @preconcurrency import Network
+import Security
 
 @MainActor
 final class DisplayWebServer {
@@ -25,8 +26,13 @@ final class DisplayWebServer {
     // アプリ起動ごとに作り直すランダムな合言葉。
     // QRコードのURLに含まれ、これが一致しないアクセスには画面を返さない。
     private static func makeAccessKey() -> String {
-        let characters = "abcdefghjkmnpqrstuvwxyz23456789"
-        return String((0..<12).compactMap { _ in characters.randomElement() })
+        var bytes = [UInt8](repeating: 0, count: 16)
+        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        guard status == errSecSuccess else {
+            return UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        }
+
+        return bytes.map { String(format: "%02x", $0) }.joined()
     }
 
     func start() {
