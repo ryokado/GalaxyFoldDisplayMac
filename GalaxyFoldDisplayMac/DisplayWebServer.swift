@@ -12,12 +12,21 @@ final class DisplayWebServer {
     private let queue = DispatchQueue(label: "GalaxyFoldDisplayMac.DisplayWebServer")
     private let streamBoundary = "galaxyfoldframe"
     private var listener: NWListener?
+    private let accessKey: String
 
     init(frameStore: SharedFrameStore, port: UInt16 = 8765) {
         self.frameStore = frameStore
         self.preferredPort = port
         self.maxPort = port + 20
         self.currentPort = port
+        self.accessKey = Self.makeAccessKey()
+    }
+
+    // アプリ起動ごとに作り直すランダムな合言葉。
+    // QRコードのURLに含まれ、これが一致しないアクセスには画面を返さない。
+    private static func makeAccessKey() -> String {
+        let characters = "abcdefghjkmnpqrstuvwxyz23456789"
+        return String((0..<12).compactMap { _ in characters.randomElement() })
     }
 
     func start() {
@@ -96,10 +105,19 @@ final class DisplayWebServer {
     private func respond(to request: String, on connection: NWConnection) {
         let path = requestPath(from: request)
 
+        // /check は接続確認専用で画面情報を含まないため、合言葉なしで開ける。
+        if path == "/check" {
+            sendCheckPage(on: connection)
+            return
+        }
+
+        guard requestKey(from: request) == accessKey else {
+            sendUnauthorized(on: connection)
+            return
+        }
+
         if path == "/" {
             sendHTML(on: connection)
-        } else if path == "/check" {
-            sendCheckPage(on: connection)
         } else if path == "/frame.jpg" {
             sendFrame(on: connection)
         } else if path == "/stream.mjpg" {
@@ -117,6 +135,22 @@ final class DisplayWebServer {
         guard parts.count >= 2 else { return "/" }
         let rawPath = String(parts[1])
         return rawPath.split(separator: "?", maxSplits: 1).first.map(String.init) ?? "/"
+    }
+
+    private func requestKey(from request: String) -> String? {
+        guard let firstLine = request.split(separator: "\r\n").first else { return nil }
+        let parts = firstLine.split(separator: " ")
+        guard parts.count >= 2 else { return nil }
+        let pieces = String(parts[1]).split(separator: "?", maxSplits: 1)
+        guard pieces.count == 2 else { return nil }
+
+        for pair in pieces[1].split(separator: "&") {
+            let keyValue = pair.split(separator: "=", maxSplits: 1)
+            if keyValue.count == 2, keyValue[0] == "key" {
+                return String(keyValue[1])
+            }
+        }
+        return nil
     }
 
     private func sendHTML(on connection: NWConnection) {
@@ -150,12 +184,12 @@ final class DisplayWebServer {
               function startStream() {
                 clearTimeout(reconnectTimer);
                 status.textContent = 'Macの画面を待っています';
-                frame.src = '/stream.mjpg?ts=' + Date.now();
+                frame.src = '/stream.mjpg?key=\(accessKey)&ts=' + Date.now();
               }
 
               async function updateStatus() {
                 try {
-                  const res = await fetch('/status.json?ts=' + Date.now(), { cache: 'no-store' });
+                  const res = await fetch('/status.json?key=\(accessKey)&ts=' + Date.now(), { cache: 'no-store' });
                   const json = await res.json();
                   if (!json.hasFrame) {
                     status.textContent = 'Mac側でプレビュー開始してください';
@@ -280,6 +314,30 @@ final class DisplayWebServer {
         send(body: Data(body.utf8), contentType: "application/json; charset=utf-8", on: connection)
     }
 
+    private func sendUnauthorized(on connection: NWConnection) {
+        let html = """
+        <!doctype html>
+        <html lang="ja">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>表示できません</title>
+            <style>
+              body { margin: 0; padding: 24px; background: #101413; color: #f4f7f5; font-family: system-ui, sans-serif; }
+              h1 { font-size: 24px; margin: 0 0 12px; }
+              p { color: #c9d2cd; line-height: 1.55; }
+            </style>
+          </head>
+          <body>
+            <h1>このURLでは表示できません</h1>
+            <p>合言葉が確認できませんでした。</p>
+            <p>Macアプリに表示されている最新のQRコードを読み取り直してください。</p>
+          </body>
+        </html>
+        """
+        send(status: "403 Forbidden", body: Data(html.utf8), contentType: "text/html; charset=utf-8", on: connection)
+    }
+
     private func sendNotFound(on connection: NWConnection) {
         send(status: "404 Not Found", body: Data("not found".utf8), contentType: "text/plain; charset=utf-8", on: connection)
     }
@@ -303,8 +361,8 @@ final class DisplayWebServer {
     }
 
     private func viewerURLs() -> [String] {
-        let urls = localIPv4Addresses().map { "http://\($0):\(currentPort)" }
-        return urls.isEmpty ? ["http://localhost:\(currentPort)"] : urls
+        let urls = localIPv4Addresses().map { "http://\($0):\(currentPort)/?key=\(accessKey)" }
+        return urls.isEmpty ? ["http://localhost:\(currentPort)/?key=\(accessKey)"] : urls
     }
 
     private func localIPv4Addresses() -> [String] {
