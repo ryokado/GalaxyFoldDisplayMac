@@ -10,6 +10,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var capture = ScreenCaptureModel()
+    @StateObject private var scrcpy = ScrcpyManager()
 
     var body: some View {
         HStack(spacing: 0) {
@@ -46,6 +47,8 @@ struct ContentView: View {
             .buttonStyle(.borderedProminent)
 
             capturePresetView
+
+            directDisplayView
 
             Button {
                 Task { await capture.refreshDisplays() }
@@ -96,6 +99,7 @@ struct ContentView: View {
             }
 
             statusView
+            scrcpyView
             foldConnectionView
 
             Spacer()
@@ -138,6 +142,88 @@ struct ContentView: View {
             Text("初回起動時に画面収録の許可が出たら許可してください。許可後はアプリの再起動が必要になることがあります。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var directDisplayView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("BetterDisplayの仮想画面")
+                .font(.headline)
+
+            Picker("直接配信する画面", selection: $capture.selectedDirectDisplayID) {
+                ForEach(capture.directDisplays) { display in
+                    Text("\(display.name) / \(display.detail)").tag(Optional(display.id))
+                }
+            }
+            .labelsHidden()
+
+            HStack {
+                Button {
+                    capture.refreshDirectDisplays()
+                } label: {
+                    Label("仮想画面を更新", systemImage: "arrow.clockwise")
+                }
+
+                Button {
+                    Task { await capture.startSelectedDirectDisplay() }
+                } label: {
+                    Label("直接配信開始", systemImage: "play.fill")
+                }
+                .disabled(capture.selectedDirectDisplayID == nil || capture.isRunning)
+            }
+
+            Text("標準画面選択に出ないBetterDisplay画面はこちらから選びます。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Text(capture.directCaptureStatusText)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var scrcpyView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("scrcpy検証", systemImage: "cable.connector")
+                .font(.headline)
+
+            Text("参考投稿に近い方式です。Android内の仮想画面を作り、Macから起動できるか確認します。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Button {
+                    scrcpy.checkDevice()
+                } label: {
+                    Label("接続確認", systemImage: "magnifyingglass")
+                }
+
+                Button {
+                    scrcpy.startVirtualDisplay()
+                } label: {
+                    Label("仮想画面起動", systemImage: "play.rectangle")
+                }
+                .disabled(scrcpy.isRunning)
+
+                Button {
+                    scrcpy.stopVirtualDisplay()
+                } label: {
+                    Label("停止", systemImage: "stop.fill")
+                }
+                .disabled(!scrcpy.isRunning)
+            }
+
+            Text(scrcpy.statusText)
+                .font(.caption.weight(.semibold))
+
+            Text(scrcpy.detailText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
         }
         .padding(12)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))

@@ -6,6 +6,15 @@ import CoreMedia
 import ScreenCaptureKit
 import SwiftUI
 
+struct DirectDisplay: Identifiable, Hashable {
+    let id: CGDirectDisplayID
+    let displayNumber: Int
+    let name: String
+    let detail: String
+    let width: Int
+    let height: Int
+}
+
 struct CaptureDisplay: Identifiable, Hashable {
     let id: CGDirectDisplayID
     let name: String
@@ -61,6 +70,14 @@ enum CapturePreset: String, CaseIterable, Identifiable {
     }
 }
 
+private enum ScreenRecordingAccessError: LocalizedError {
+    case notGranted
+
+    var errorDescription: String? {
+        "画面収録の許可をMacがまだ確認できていません。"
+    }
+}
+
 private final class FrameEncodingSettings: @unchecked Sendable {
     private let lock = NSLock()
     private var quality: CGFloat = CapturePreset.balanced.jpegQuality
@@ -80,6 +97,8 @@ private final class FrameEncodingSettings: @unchecked Sendable {
 
 @MainActor
 final class ScreenCaptureModel: NSObject, ObservableObject {
+    @Published var directDisplays: [DirectDisplay] = []
+    @Published var selectedDirectDisplayID: CGDirectDisplayID?
     @Published var displays: [CaptureDisplay] = []
     @Published var selectedDisplayID: CGDirectDisplayID?
     @Published var capturePreset: CapturePreset = .balanced {
@@ -89,6 +108,7 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
     }
     @Published var isRunning = false
     @Published var statusText = "待機中"
+    @Published var directCaptureStatusText = "直接配信: 未開始"
     @Published var serverStatusText = "Fold配信: 準備中"
     @Published var viewerURLs: [String] = []
     var primaryViewerURL: String? { viewerURLs.first }
@@ -99,13 +119,18 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
 
     private let frameStore = SharedFrameStore()
     private var stream: SCStream?
+    private var screenshotTask: Task<Void, Never>?
     private var webServer: DisplayWebServer?
     nonisolated private let encodingSettings = FrameEncodingSettings()
     private let sampleQueue = DispatchQueue(label: "GalaxyFoldDisplayMac.ScreenCapture")
     private var isPickerConfigured = false
+    private var isDirectHighSpeedCapture = false
+    private var directHighSpeedFrameCount = 0
+    private var didRequestScreenRecordingAccess = false
 
     override init() {
         super.init()
+        Self.removeStaleTemporaryImages()
 
         let server = DisplayWebServer(frameStore: frameStore)
         server.onStatusChange = { [weak self] status, urls in
@@ -114,11 +139,52 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
         }
         webServer = server
         server.start()
+        refreshDirectDisplays()
+    }
+
+    func refreshDirectDisplays() {
+        var count: UInt32 = 0
+        CGGetOnlineDisplayList(0, nil, &count)
+
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        CGGetOnlineDisplayList(count, &ids, &count)
+
+        let nextDisplays = ids.enumerated().map { index, id in
+            let width = CGDisplayPixelsWide(id)
+            let height = CGDisplayPixelsHigh(id)
+            let bounds = CGDisplayBounds(id)
+            let builtInLabel = CGDisplayIsBuiltin(id) != 0 ? "内蔵" : "外部/仮想"
+            return DirectDisplay(
+                id: id,
+                displayNumber: index + 1,
+                name: "\(builtInLabel) 画面 \(index + 1)",
+                detail: "\(width) x \(height) / 位置 \(Int(bounds.origin.x)), \(Int(bounds.origin.y)) / ID \(id)",
+                width: width,
+                height: height
+            )
+        }
+
+        directDisplays = nextDisplays.sorted { left, right in
+            if left.name == right.name {
+                return left.id < right.id
+            }
+            return left.name < right.name
+        }
+
+        if selectedDirectDisplayID == nil || !directDisplays.contains(where: { $0.id == selectedDirectDisplayID }) {
+            selectedDirectDisplayID = directDisplays.first(where: { $0.name.contains("外部/仮想") })?.id ?? directDisplays.first?.id
+        }
+
+        statusText = directDisplays.isEmpty ? "直接選べる画面が見つかりません" : "直接選べる画面を更新しました"
     }
 
     func refreshDisplays() async {
         do {
-            _ = requestScreenRecordingPermissionIfNeeded()
+            guard requestScreenRecordingPermissionIfNeeded() else {
+                showScreenRecordingAccessError()
+                return
+            }
+
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             let nextDisplays = content.displays.map { display in
                 CaptureDisplay(
@@ -164,6 +230,16 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
         )
     }
 
+    func startSelectedDirectDisplay() async {
+        guard let selectedDirectDisplayID,
+              let display = directDisplays.first(where: { $0.id == selectedDirectDisplayID }) else {
+            statusText = "直接配信する画面を選択してください"
+            return
+        }
+
+        await startDirectDisplayCapture(display)
+    }
+
     func startWithSystemPicker() {
         guard #available(macOS 14.0, *) else {
             errorMessage = "このMacでは標準画面選択を使えません。画面一覧から選んでください。"
@@ -178,6 +254,8 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
 
     private func startCapture(filter: SCContentFilter, width: Int, height: Int, label: String) async {
         await stop()
+        isDirectHighSpeedCapture = false
+        directHighSpeedFrameCount = 0
 
         do {
             let preset = capturePreset
@@ -202,7 +280,80 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
         }
     }
 
+    private func startDirectDisplayCapture(_ display: DirectDisplay) async {
+        if await startScreenCaptureKitDirectDisplay(display) {
+            return
+        }
+
+        await stop()
+
+        let preset = capturePreset
+        isRunning = true
+        isDirectHighSpeedCapture = false
+        directHighSpeedFrameCount = 0
+        statusText = "\(display.name) を直接配信中（\(preset.title)）"
+        directCaptureStatusText = "直接配信: 低速配信で開始中"
+        screenshotTask = Task.detached(priority: .userInitiated) { [weak self] in
+            await self?.runScreenshotLoop(displayNumber: display.displayNumber, preset: preset)
+        }
+    }
+
+    private func startScreenCaptureKitDirectDisplay(_ directDisplay: DirectDisplay) async -> Bool {
+        do {
+            guard CGPreflightScreenCaptureAccess() else {
+                showScreenRecordingAccessError()
+                return true
+            }
+
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            guard let display = content.displays.first(where: { $0.displayID == directDisplay.id }) else {
+                directCaptureStatusText = "直接配信: 高速配信対象が見つからないため低速配信へ切替"
+                return false
+            }
+
+            await stop()
+
+            let preset = capturePreset
+            let dimensions = scaledDimensions(width: display.width, height: display.height, maxWidth: preset.maxWidth)
+            let configuration = SCStreamConfiguration()
+            configuration.width = dimensions.width
+            configuration.height = dimensions.height
+            configuration.minimumFrameInterval = CMTime(value: 1, timescale: Int32(preset.framesPerSecond))
+            configuration.queueDepth = 6
+            configuration.showsCursor = true
+            configuration.capturesAudio = false
+
+            let filter = SCContentFilter(display: display, excludingWindows: [])
+            let nextStream = SCStream(filter: filter, configuration: configuration, delegate: self)
+            try nextStream.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
+            try await nextStream.startCapture()
+
+            stream = nextStream
+            isRunning = true
+            isDirectHighSpeedCapture = true
+            directHighSpeedFrameCount = 0
+            statusText = "\(directDisplay.name) を高速配信中（\(preset.title)）"
+            directCaptureStatusText = "直接配信: 高速配信中"
+            return true
+        } catch {
+            directCaptureStatusText = "直接配信: 高速配信不可のため低速配信へ切替"
+            return false
+        }
+    }
+
     func stop() async {
+        if let activeScreenshotTask = screenshotTask {
+            activeScreenshotTask.cancel()
+            screenshotTask = nil
+            isRunning = false
+            isDirectHighSpeedCapture = false
+            directHighSpeedFrameCount = 0
+            statusText = "停止しました"
+            directCaptureStatusText = "直接配信: 停止"
+            previewLayer?.flushAndRemoveImage()
+            return
+        }
+
         guard let activeStream = stream else {
             isRunning = false
             return
@@ -216,6 +367,8 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
 
         stream = nil
         isRunning = false
+        isDirectHighSpeedCapture = false
+        directHighSpeedFrameCount = 0
         statusText = "停止しました"
         previewLayer?.flushAndRemoveImage()
     }
@@ -257,7 +410,124 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
         if CGPreflightScreenCaptureAccess() {
             return true
         }
+
+        guard !didRequestScreenRecordingAccess else {
+            return false
+        }
+
+        didRequestScreenRecordingAccess = true
         return CGRequestScreenCaptureAccess()
+    }
+
+    private func showScreenRecordingAccessError() {
+        showError(
+            """
+            画面収録の許可がまだMacに反映されていません。
+
+            何度も確認画面が出ないように、今回は画面取得を開始しませんでした。
+
+            システム設定の「プライバシーとセキュリティ」→「画面収録とシステムオーディオ録音」で /Applications/GalaxyFoldDisplayMac.app をオンにしてください。
+            すでにオンの場合は、このアプリを完全終了してから開き直してください。
+            """,
+            ScreenRecordingAccessError.notGranted
+        )
+    }
+
+    nonisolated private func runScreenshotLoop(displayNumber: Int, preset: CapturePreset) async {
+        let delayNanoseconds = switch preset {
+        case .speed: UInt64(140_000_000)
+        case .balanced: UInt64(200_000_000)
+        case .quality: UInt64(300_000_000)
+        }
+
+        var failureCount = 0
+        var frameCount = 0
+
+        while !Task.isCancelled {
+            if let jpegData = Self.captureDisplayImage(displayNumber: displayNumber) {
+                failureCount = 0
+                frameCount += 1
+                let sentFrameCount = frameCount
+                let imageSizeText = Self.byteSizeText(jpegData.count)
+                await MainActor.run {
+                    self.frameStore.update(frame: jpegData)
+                    self.directCaptureStatusText = "直接配信: 低速配信で\(sentFrameCount)枚送信中 / 最新 \(imageSizeText)"
+                }
+            } else {
+                failureCount += 1
+                if failureCount >= 1 {
+                    await MainActor.run {
+                        self.screenshotTask = nil
+                        self.isRunning = false
+                        self.statusText = "直接配信を停止しました"
+                        self.directCaptureStatusText = "直接配信: 画像を作れませんでした"
+                        self.errorMessage = """
+                        直接配信を開始できませんでした。
+
+                        Macの画面収録がまだ許可されていないか、許可ダイアログで拒否されました。
+                        繰り返し確認が出ないように配信処理を停止しました。
+
+                        許可する場合は、システム設定の画面収録で /Applications/GalaxyFoldDisplayMac.app を許可してから、アプリを起動し直してください。
+                        """
+                        self.isShowingError = true
+                    }
+                    return
+                }
+            }
+
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
+        }
+    }
+
+    nonisolated private static func captureDisplayImage(displayNumber: Int) -> Data? {
+        let fileURL = temporaryImageURL()
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        process.arguments = ["-x", "-C", "-tjpg", "-D\(displayNumber)", fileURL.path]
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return nil }
+            let data = try Data(contentsOf: fileURL)
+            try? FileManager.default.removeItem(at: fileURL)
+            return data
+        } catch {
+            try? FileManager.default.removeItem(at: fileURL)
+            return nil
+        }
+    }
+
+    nonisolated private static func temporaryImageURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("GalaxyFoldDisplayMac-\(UUID().uuidString).jpg")
+    }
+
+    nonisolated private static func removeStaleTemporaryImages() {
+        let directory = FileManager.default.temporaryDirectory
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+
+        let cutoff = Date().addingTimeInterval(-60 * 10)
+        for file in files where file.lastPathComponent.hasPrefix("GalaxyFoldDisplayMac-") && file.pathExtension == "jpg" {
+            let values = try? file.resourceValues(forKeys: [.contentModificationDateKey])
+            if values?.contentModificationDate ?? .distantPast < cutoff {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
+    }
+
+    nonisolated private static func byteSizeText(_ byteCount: Int) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(byteCount))
     }
 
     private func showError(_ message: String, _ error: Error) {
@@ -278,11 +548,14 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
     }
 }
 
+
 extension ScreenCaptureModel: SCStreamDelegate {
     nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
         Task { @MainActor in
             self.showError("画面プレビューが停止しました。", error)
             self.stream = nil
+            self.isDirectHighSpeedCapture = false
+            self.directHighSpeedFrameCount = 0
         }
     }
 }
@@ -321,6 +594,11 @@ extension ScreenCaptureModel: SCStreamOutput {
         Task { @MainActor in
             if let jpegData {
                 self.frameStore.update(frame: jpegData)
+                if self.isDirectHighSpeedCapture {
+                    self.directHighSpeedFrameCount += 1
+                    let imageSizeText = Self.byteSizeText(jpegData.count)
+                    self.directCaptureStatusText = "直接配信: 高速配信で\(self.directHighSpeedFrameCount)枚送信中 / 最新 \(imageSizeText)"
+                }
             }
 
             guard let layer = self.previewLayer else { return }
