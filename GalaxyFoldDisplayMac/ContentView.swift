@@ -171,12 +171,11 @@ struct ContentView: View {
             Text("BetterDisplayの仮想画面")
                 .font(.headline)
 
-            Picker("直接配信する画面", selection: $capture.selectedDirectDisplayID) {
+            VStack(spacing: 6) {
                 ForEach(capture.directDisplays) { display in
-                    Text("\(display.name) / \(display.detail)").tag(Optional(display.id))
+                    directDisplayButton(display)
                 }
             }
-            .labelsHidden()
 
             HStack {
                 Button {
@@ -193,7 +192,7 @@ struct ContentView: View {
                 .disabled(capture.selectedDirectDisplayID == nil || capture.isRunning)
             }
 
-            Text("標準画面選択に出ないBetterDisplay画面はこちらから選びます。")
+            Text("3440 x 1440のような横長画面は、実物の外部モニターである可能性が高いです。Fold用は「Galaxy Fold候補」を選びます。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -203,6 +202,45 @@ struct ContentView: View {
         }
         .padding(12)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func directDisplayButton(_ display: DirectDisplay) -> some View {
+        let isSelected = capture.selectedDirectDisplayID == display.id
+
+        return Button {
+            capture.selectedDirectDisplayID = display.id
+        } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(display.name)
+                        .font(.body.weight(.semibold))
+                    if display.isRecommended {
+                        Text("おすすめ")
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(isSelected ? .white.opacity(0.22) : Color.green.opacity(0.18), in: Capsule())
+                    }
+                }
+
+                Text(display.detail)
+                    .font(.caption)
+                    .foregroundStyle(isSelected ? .white.opacity(0.88) : .secondary)
+
+                Text(display.helpText)
+                    .font(.caption)
+                    .foregroundStyle(isSelected ? .white.opacity(0.78) : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(
+                isSelected ? Color.accentColor : Color.secondary.opacity(0.12),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isSelected ? .white : .primary)
     }
 
     private var scrcpyView: some View {

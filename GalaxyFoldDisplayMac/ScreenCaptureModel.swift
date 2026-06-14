@@ -11,6 +11,9 @@ struct DirectDisplay: Identifiable, Hashable {
     let displayNumber: Int
     let name: String
     let detail: String
+    let helpText: String
+    let isRecommended: Bool
+    let sortPriority: Int
     let width: Int
     let height: Int
 }
@@ -153,26 +156,42 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
             let width = CGDisplayPixelsWide(id)
             let height = CGDisplayPixelsHigh(id)
             let bounds = CGDisplayBounds(id)
-            let builtInLabel = CGDisplayIsBuiltin(id) != 0 ? "内蔵" : "外部/仮想"
+            let isBuiltin = CGDisplayIsBuiltin(id) != 0
+            let displayDescription = Self.directDisplayDescription(
+                id: id,
+                width: width,
+                height: height,
+                bounds: bounds,
+                isBuiltin: isBuiltin
+            )
+
             return DirectDisplay(
                 id: id,
                 displayNumber: index + 1,
-                name: "\(builtInLabel) 画面 \(index + 1)",
-                detail: "\(width) x \(height) / 位置 \(Int(bounds.origin.x)), \(Int(bounds.origin.y)) / ID \(id)",
+                name: displayDescription.name,
+                detail: displayDescription.detail,
+                helpText: displayDescription.helpText,
+                isRecommended: displayDescription.isRecommended,
+                sortPriority: displayDescription.sortPriority,
                 width: width,
                 height: height
             )
         }
 
         directDisplays = nextDisplays.sorted { left, right in
-            if left.name == right.name {
-                return left.id < right.id
+            if left.sortPriority == right.sortPriority {
+                if left.name == right.name {
+                    return left.id < right.id
+                }
+                return left.name < right.name
             }
-            return left.name < right.name
+            return left.sortPriority < right.sortPriority
         }
 
         if selectedDirectDisplayID == nil || !directDisplays.contains(where: { $0.id == selectedDirectDisplayID }) {
-            selectedDirectDisplayID = directDisplays.first(where: { $0.name.contains("外部/仮想") })?.id ?? directDisplays.first?.id
+            selectedDirectDisplayID = directDisplays.first(where: \.isRecommended)?.id
+                ?? directDisplays.first(where: { !$0.name.contains("MacBook内蔵") })?.id
+                ?? directDisplays.first?.id
         }
 
         statusText = directDisplays.isEmpty ? "直接選べる画面が見つかりません" : "直接選べる画面を更新しました"
@@ -375,6 +394,72 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
 
     private func displayName(for display: SCDisplay) -> String {
         return "Display \(display.displayID)"
+    }
+
+    private static func directDisplayDescription(
+        id: CGDirectDisplayID,
+        width: Int,
+        height: Int,
+        bounds: CGRect,
+        isBuiltin: Bool
+    ) -> (name: String, detail: String, helpText: String, isRecommended: Bool, sortPriority: Int) {
+        let aspectRatio = Double(max(width, height)) / Double(max(1, min(width, height)))
+        let isVeryWide = aspectRatio >= 1.9
+        let isLikelyFoldVirtualDisplay = !isBuiltin && !isVeryWide && width >= 1000 && height >= 1000
+        let position = directDisplayPositionText(bounds)
+        let mainText = CGMainDisplayID() == id ? " / メイン画面" : ""
+        let detail = "\(width) x \(height) / \(position)\(mainText)"
+
+        if isBuiltin {
+            return (
+                "MacBook内蔵画面",
+                detail,
+                "MacBook本体の画面です。Fold用の仮想画面ではありません。",
+                false,
+                3
+            )
+        }
+
+        if isLikelyFoldVirtualDisplay {
+            return (
+                "Galaxy Fold候補（BetterDisplay）",
+                detail,
+                "BetterDisplayで作ったFold用の仮想画面候補です。迷ったらまずこれを選んでください。",
+                true,
+                0
+            )
+        }
+
+        if isVeryWide {
+            return (
+                "外部モニターらしき画面（横長）",
+                detail,
+                "3440 x 1440などの横長画面は、実物の外部モニターである可能性が高いです。Fold用でなければ選ばなくて大丈夫です。",
+                false,
+                2
+            )
+        }
+
+        return (
+            "外部/仮想画面",
+            detail,
+            "外部モニターまたは仮想画面です。BetterDisplayで作った解像度と一致するか確認してください。",
+            false,
+            1
+        )
+    }
+
+    private static func directDisplayPositionText(_ bounds: CGRect) -> String {
+        let x = Int(bounds.origin.x)
+        let y = Int(bounds.origin.y)
+
+        if x == 0 && y == 0 {
+            return "基準位置"
+        }
+        if abs(x) >= abs(y) {
+            return x > 0 ? "右側に配置" : "左側に配置"
+        }
+        return y > 0 ? "下側に配置" : "上側に配置"
     }
 
     private func scaledDimensions(width: Int, height: Int, maxWidth: Int) -> (width: Int, height: Int) {
