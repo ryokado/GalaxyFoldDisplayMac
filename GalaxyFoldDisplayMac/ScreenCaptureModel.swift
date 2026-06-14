@@ -113,6 +113,7 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
     @Published var isRunning = false
     @Published var statusText = "待機中"
     @Published var directCaptureStatusText = "直接配信: 未開始"
+    @Published var displayPlacementStatusText = "配置: 前回の位置へ戻します。初回はMacBook本体の左側へ自動配置します"
     @Published var serverStatusText = "Fold配信: 準備中"
     @Published var viewerURLs: [String] = []
     var primaryViewerURL: String? { viewerURLs.first }
@@ -302,6 +303,8 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
     }
 
     private func startDirectDisplayCapture(_ display: DirectDisplay) async {
+        arrangeDirectDisplayLeftOfMacBookIfNeeded(display)
+
         if await startScreenCaptureKitDirectDisplay(display) {
             return
         }
@@ -396,6 +399,98 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
 
     private func displayName(for display: SCDisplay) -> String {
         return "Display \(display.displayID)"
+    }
+
+    private func arrangeDirectDisplayLeftOfMacBookIfNeeded(_ display: DirectDisplay) {
+        guard CGDisplayIsBuiltin(display.id) == 0 else {
+            displayPlacementStatusText = "配置: MacBook本体の画面なので自動配置は行いません"
+            return
+        }
+
+        let anchorID = Self.builtInDisplayID() ?? CGMainDisplayID()
+        guard display.id != anchorID else {
+            displayPlacementStatusText = "配置: 基準画面なので自動配置は行いません"
+            return
+        }
+
+        let anchorBounds = CGDisplayBounds(anchorID)
+        let targetBounds = CGDisplayBounds(display.id)
+        guard anchorBounds.width > 0, targetBounds.width > 0 else {
+            displayPlacementStatusText = "配置: 画面位置を確認できませんでした"
+            return
+        }
+
+        let savedOrigin = Self.savedDisplayOrigin(for: display)
+        let fallbackOrigin = CGPoint(x: anchorBounds.minX - targetBounds.width, y: anchorBounds.minY)
+        let nextOrigin = savedOrigin ?? fallbackOrigin
+        let nextX = Int32(nextOrigin.x.rounded())
+        let nextY = Int32(nextOrigin.y.rounded())
+        let placementLabel = savedOrigin == nil ? "MacBook本体の左側" : "前回の位置"
+
+        if Int32(targetBounds.origin.x.rounded()) == nextX,
+           Int32(targetBounds.origin.y.rounded()) == nextY {
+            Self.saveDisplayOrigin(CGPoint(x: CGFloat(nextX), y: CGFloat(nextY)), for: display)
+            displayPlacementStatusText = "配置: Fold画面はすでに\(placementLabel)です"
+            return
+        }
+
+        var configuration: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&configuration) == .success,
+              let configuration else {
+            displayPlacementStatusText = "配置: 左側への自動配置を開始できませんでした"
+            return
+        }
+
+        let moveResult = CGConfigureDisplayOrigin(configuration, display.id, nextX, nextY)
+        guard moveResult == .success else {
+            CGCancelDisplayConfiguration(configuration)
+            displayPlacementStatusText = "配置: 左側への自動配置に失敗しました"
+            return
+        }
+
+        let completeResult = CGCompleteDisplayConfiguration(configuration, .forSession)
+        if completeResult == .success {
+            Self.saveDisplayOrigin(CGPoint(x: CGFloat(nextX), y: CGFloat(nextY)), for: display)
+            displayPlacementStatusText = "配置: Fold画面を\(placementLabel)へ自動配置しました"
+            refreshDirectDisplays()
+        } else {
+            displayPlacementStatusText = "配置: 左側への自動配置を保存できませんでした"
+        }
+    }
+
+    private static func builtInDisplayID() -> CGDirectDisplayID? {
+        var count: UInt32 = 0
+        CGGetOnlineDisplayList(0, nil, &count)
+
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        CGGetOnlineDisplayList(count, &ids, &count)
+
+        return ids.first { CGDisplayIsBuiltin($0) != 0 }
+    }
+
+    private static func savedDisplayOrigin(for display: DirectDisplay) -> CGPoint? {
+        let defaults = UserDefaults.standard
+        let xKey = displayPlacementKey("x", for: display)
+        let yKey = displayPlacementKey("y", for: display)
+        guard defaults.object(forKey: xKey) != nil,
+              defaults.object(forKey: yKey) != nil else {
+            return nil
+        }
+
+        return CGPoint(
+            x: defaults.double(forKey: xKey),
+            y: defaults.double(forKey: yKey)
+        )
+    }
+
+    private static func saveDisplayOrigin(_ origin: CGPoint, for display: DirectDisplay) {
+        let defaults = UserDefaults.standard
+        defaults.set(origin.x, forKey: displayPlacementKey("x", for: display))
+        defaults.set(origin.y, forKey: displayPlacementKey("y", for: display))
+    }
+
+    private static func displayPlacementKey(_ axis: String, for display: DirectDisplay) -> String {
+        "GalaxyFoldDisplayMac.lastDisplayOrigin.\(display.width)x\(display.height).\(axis)"
     }
 
     private func updateDirectDisplayRefreshSummary() {

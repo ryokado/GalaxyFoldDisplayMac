@@ -212,6 +212,11 @@ struct ContentView: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(capture.isRunning ? .green : .secondary)
 
+            Label(capture.displayPlacementStatusText, systemImage: "rectangle.connected.to.line.below")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
             if capture.isRunning {
                 Text("表示設定の変更は、停止して再開すると反映されます。")
                     .font(.caption)
