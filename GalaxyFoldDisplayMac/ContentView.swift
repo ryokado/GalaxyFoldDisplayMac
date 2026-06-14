@@ -171,6 +171,11 @@ struct ContentView: View {
             Text("BetterDisplayの仮想画面")
                 .font(.headline)
 
+            Label(capture.directDisplayRefreshSummary, systemImage: "arrow.clockwise.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
             VStack(spacing: 6) {
                 ForEach(capture.directDisplays) { display in
                     directDisplayButton(display)
@@ -181,8 +186,9 @@ struct ContentView: View {
                 Button {
                     capture.refreshDirectDisplays()
                 } label: {
-                    Label("仮想画面を更新", systemImage: "arrow.clockwise")
+                    Label("画面候補を再読み込み", systemImage: "arrow.clockwise")
                 }
+                .help("BetterDisplayで仮想画面を作った後や、解像度を変えた後に押します。")
 
                 Button {
                     Task { await capture.startSelectedDirectDisplay() }

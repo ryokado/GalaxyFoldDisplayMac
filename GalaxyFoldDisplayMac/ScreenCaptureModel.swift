@@ -102,6 +102,7 @@ private final class FrameEncodingSettings: @unchecked Sendable {
 final class ScreenCaptureModel: NSObject, ObservableObject {
     @Published var directDisplays: [DirectDisplay] = []
     @Published var selectedDirectDisplayID: CGDirectDisplayID?
+    @Published var directDisplayRefreshSummary = "BetterDisplayで仮想画面を作った後に、ここで候補を再読み込みできます。"
     @Published var displays: [CaptureDisplay] = []
     @Published var selectedDisplayID: CGDirectDisplayID?
     @Published var capturePreset: CapturePreset = .balanced {
@@ -194,6 +195,7 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
                 ?? directDisplays.first?.id
         }
 
+        updateDirectDisplayRefreshSummary()
         statusText = directDisplays.isEmpty ? "直接選べる画面が見つかりません" : "直接選べる画面を更新しました"
     }
 
@@ -394,6 +396,24 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
 
     private func displayName(for display: SCDisplay) -> String {
         return "Display \(display.displayID)"
+    }
+
+    private func updateDirectDisplayRefreshSummary() {
+        let timeText = Date.now.formatted(date: .omitted, time: .standard)
+
+        guard !directDisplays.isEmpty else {
+            directDisplayRefreshSummary = "\(timeText)に再読み込みしました。画面候補は見つかりませんでした。"
+            return
+        }
+
+        let foldCandidateCount = directDisplays.filter(\.isRecommended).count
+        let selectedName = directDisplays.first(where: { $0.id == selectedDirectDisplayID })?.name ?? "未選択"
+
+        if foldCandidateCount > 0 {
+            directDisplayRefreshSummary = "\(timeText)に再読み込み: \(directDisplays.count)件 / Fold候補 \(foldCandidateCount)件 / 選択中: \(selectedName)"
+        } else {
+            directDisplayRefreshSummary = "\(timeText)に再読み込み: \(directDisplays.count)件。Fold候補がない場合は、BetterDisplayで仮想画面を作ってからもう一度押してください。"
+        }
     }
 
     private static func directDisplayDescription(
