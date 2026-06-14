@@ -11,6 +11,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var capture = ScreenCaptureModel()
     @StateObject private var scrcpy = ScrcpyManager()
+    @State private var isScrcpyExpanded = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -49,6 +50,8 @@ struct ContentView: View {
 
                 capturePresetView
 
+                foldConnectionView
+
                 directDisplayView
 
                 manualDisplayView
@@ -71,7 +74,6 @@ struct ContentView: View {
 
                 statusView
                 scrcpyView
-                foldConnectionView
             }
             .padding(20)
         }
@@ -204,43 +206,46 @@ struct ContentView: View {
     }
 
     private var scrcpyView: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        DisclosureGroup(isExpanded: $isScrcpyExpanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Android内の仮想画面を作る実験用です。通常のFold表示には使いません。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack {
+                    Button {
+                        scrcpy.checkDevice()
+                    } label: {
+                        Label("接続確認", systemImage: "magnifyingglass")
+                    }
+
+                    Button {
+                        scrcpy.startVirtualDisplay()
+                    } label: {
+                        Label("仮想画面起動", systemImage: "play.rectangle")
+                    }
+                    .disabled(scrcpy.isRunning)
+
+                    Button {
+                        scrcpy.stopVirtualDisplay()
+                    } label: {
+                        Label("停止", systemImage: "stop.fill")
+                    }
+                    .disabled(!scrcpy.isRunning)
+                }
+
+                Text(scrcpy.statusText)
+                    .font(.caption.weight(.semibold))
+
+                Text(scrcpy.detailText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            .padding(.top, 6)
+        } label: {
             Label("scrcpy検証", systemImage: "cable.connector")
                 .font(.headline)
-
-            Text("参考投稿に近い方式です。Android内の仮想画面を作り、Macから起動できるか確認します。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            HStack {
-                Button {
-                    scrcpy.checkDevice()
-                } label: {
-                    Label("接続確認", systemImage: "magnifyingglass")
-                }
-
-                Button {
-                    scrcpy.startVirtualDisplay()
-                } label: {
-                    Label("仮想画面起動", systemImage: "play.rectangle")
-                }
-                .disabled(scrcpy.isRunning)
-
-                Button {
-                    scrcpy.stopVirtualDisplay()
-                } label: {
-                    Label("停止", systemImage: "stop.fill")
-                }
-                .disabled(!scrcpy.isRunning)
-            }
-
-            Text(scrcpy.statusText)
-                .font(.caption.weight(.semibold))
-
-            Text(scrcpy.detailText)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
         }
         .padding(12)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
@@ -252,28 +257,22 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
 
             if let viewerURL = capture.primaryViewerURL {
-                Text("MacとFoldを同じWi-Fiにつないでください。プレビュー開始後、このURLをFoldで開くと表示されます。")
+                Text("FoldのカメラでQRを読み取ると表示できます。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-
-                Text("Foldで開くURL")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                Text(viewerURL)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.background, in: RoundedRectangle(cornerRadius: 8))
 
                 QRCodeView(text: viewerURL)
-                    .frame(width: 180, height: 180)
+                    .frame(width: 156, height: 156)
                     .frame(maxWidth: .infinity)
 
-                Text("FoldのカメラでQRを読み取るか、上のURLをChromeで開いてください。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(viewerURL)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 8))
 
                 if capture.viewerURLs.count > 1 {
                     Divider()
