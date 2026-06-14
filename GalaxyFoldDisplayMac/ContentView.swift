@@ -11,6 +11,8 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var capture = ScreenCaptureModel()
     @StateObject private var scrcpy = ScrcpyManager()
+    @State private var isAdvancedExpanded = false
+    @State private var isNetworkDetailsExpanded = false
     @State private var isScrcpyExpanded = false
 
     var body: some View {
@@ -19,7 +21,7 @@ struct ContentView: View {
             Divider()
             preview
         }
-        .frame(minWidth: 980, minHeight: 620)
+        .frame(minWidth: 1040, minHeight: 660)
         .alert("画面取得エラー", isPresented: $capture.isShowingError) {
             Button("画面収録設定を開く") {
                 openScreenRecordingSettings()
@@ -31,60 +33,143 @@ struct ContentView: View {
     }
 
     private var sidebar: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Galaxy Fold Display")
-                        .font(.title2.weight(.semibold))
-                    Text("Macの画面を選び、FoldのChromeへ表示します。")
-                        .foregroundStyle(.secondary)
-                        .font(.subheadline)
-                }
-
-                Button {
-                    capture.startWithSystemPicker()
-                } label: {
-                    Label("標準画面選択で開始", systemImage: "rectangle.on.rectangle")
-                }
-                .buttonStyle(.borderedProminent)
-
-                capturePresetView
-
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 14) {
+                appHeader
                 foldConnectionView
-
-                directDisplayView
-
-                manualDisplayView
-
-                HStack {
-                    Button {
-                        Task { await capture.startSelectedDisplay() }
-                    } label: {
-                        Label("手動プレビュー開始", systemImage: "play.fill")
-                    }
-                    .disabled(capture.selectedDisplayID == nil || capture.isRunning)
-
-                    Button {
-                        Task { await capture.stop() }
-                    } label: {
-                        Label("停止", systemImage: "stop.fill")
-                    }
-                    .disabled(!capture.isRunning)
-                }
-
-                statusView
-                scrcpyView
             }
             .padding(20)
+
+            Divider()
+
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 14) {
+                    directDisplayView
+                    transmissionView
+                    statusView
+                    advancedView
+                }
+                .padding(20)
+            }
+            .scrollIndicators(.visible)
         }
-        .scrollIndicators(.visible)
-        .frame(width: 360)
+        .frame(width: 390)
+        .background(.regularMaterial)
     }
 
-    private var capturePresetView: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("表示設定")
-                .font(.headline)
+    private var appHeader: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "display.and.arrow.down")
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Galaxy Fold Display")
+                    .font(.title3.weight(.semibold))
+                Text("Macの仮想画面をFoldへ表示します")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var foldConnectionView: some View {
+        sectionContainer {
+            stepHeader(number: "1", title: "Foldに接続", systemImage: "qrcode.viewfinder")
+
+            Label(capture.serverStatusText, systemImage: "network")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            if let viewerURL = capture.primaryViewerURL {
+                Text("Galaxy Foldのカメラで読み取ります。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                QRCodeView(text: viewerURL)
+                    .frame(width: 158, height: 158)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 2)
+
+                Text(viewerURL)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 8))
+
+                if capture.viewerURLs.count > 1 {
+                    DisclosureGroup(isExpanded: $isNetworkDetailsExpanded) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("白画面になる場合だけ、下の別URLも試してください。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            ForEach(capture.viewerURLs.dropFirst(), id: \.self) { url in
+                                Text(url)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .lineLimit(2)
+                                    .truncationMode(.middle)
+                                    .padding(8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(.background, in: RoundedRectangle(cornerRadius: 8))
+                            }
+                        }
+                        .padding(.top, 6)
+                    } label: {
+                        Text("別URLを表示")
+                            .font(.caption.weight(.semibold))
+                    }
+                }
+            } else {
+                Text("Fold接続用URLを準備しています。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var directDisplayView: some View {
+        sectionContainer {
+            HStack(alignment: .firstTextBaseline) {
+                stepHeader(number: "2", title: "表示する画面", systemImage: "display")
+
+                Spacer()
+
+                Button {
+                    capture.refreshDirectDisplays()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .help("BetterDisplayで仮想画面を作った後や、解像度を変えた後に押します。")
+            }
+
+            Label(capture.directDisplayRefreshSummary, systemImage: "checkmark.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 6) {
+                ForEach(capture.directDisplays) { display in
+                    directDisplayButton(display)
+                }
+            }
+
+            Text("Fold用は「Galaxy Fold候補」を選びます。3440 x 1440の横長画面は、実物の外部モニターの可能性が高いです。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var transmissionView: some View {
+        sectionContainer {
+            stepHeader(number: "3", title: "配信", systemImage: "dot.radiowaves.left.and.right")
 
             Picker("表示設定", selection: $capture.capturePreset) {
                 ForEach(CapturePreset.allCases) { preset in
@@ -97,34 +182,88 @@ struct ContentView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+            HStack(spacing: 8) {
+                Button {
+                    Task { await capture.startSelectedDirectDisplay() }
+                } label: {
+                    Label("配信開始", systemImage: "play.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(capture.selectedDirectDisplayID == nil || capture.isRunning)
+
+                Button {
+                    Task { await capture.stop() }
+                } label: {
+                    Label("停止", systemImage: "stop.fill")
+                }
+                .buttonStyle(.bordered)
+                .disabled(!capture.isRunning)
+            }
+
+            Label(capture.directCaptureStatusText, systemImage: capture.isRunning ? "checkmark.circle.fill" : "info.circle")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(capture.isRunning ? .green : .secondary)
+
             if capture.isRunning {
-                Text("サイズと更新回数は、停止して再開すると反映されます。")
+                Text("表示設定の変更は、停止して再開すると反映されます。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var statusView: some View {
+        sectionContainer {
+            Label(capture.statusText, systemImage: capture.isRunning ? "checkmark.circle.fill" : "info.circle")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(capture.isRunning ? .green : .secondary)
+
+            Text("初回起動時に画面収録の許可が出たら許可してください。許可後はアプリの再起動が必要になることがあります。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var advancedView: some View {
+        DisclosureGroup(isExpanded: $isAdvancedExpanded) {
+            VStack(alignment: .leading, spacing: 14) {
+                Button {
+                    capture.startWithSystemPicker()
+                } label: {
+                    Label("標準画面選択で開始", systemImage: "rectangle.on.rectangle")
+                }
+
+                manualDisplayView
+                scrcpyView
+            }
+            .padding(.top, 8)
+        } label: {
+            Label("詳細設定", systemImage: "slider.horizontal.3")
+                .font(.headline)
+        }
         .padding(12)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var manualDisplayView: some View {
         VStack(alignment: .leading, spacing: 8) {
+            Text("手動で共有する画面")
+                .font(.subheadline.weight(.semibold))
+
             Button {
                 Task { await capture.refreshDisplays() }
             } label: {
                 Label("画面一覧を手動更新", systemImage: "arrow.clockwise")
             }
 
-            Text("手動で共有する画面")
-                .font(.headline)
-
             if capture.displays.isEmpty {
                 ContentUnavailableView(
                     "画面一覧は未取得です",
                     systemImage: "display",
-                    description: Text("通常は上の標準画面選択を使ってください。必要な場合だけ手動更新します。")
+                    description: Text("通常は上のFold用画面を使います。必要な場合だけ手動更新します。")
                 )
-                .frame(maxWidth: .infinity, minHeight: 150)
+                .frame(maxWidth: .infinity, minHeight: 130)
             } else {
                 VStack(spacing: 6) {
                     ForEach(capture.displays) { display in
@@ -149,104 +288,15 @@ struct ContentView: View {
                         .foregroundStyle(capture.selectedDisplayID == display.id ? .white : .primary)
                     }
                 }
-            }
-        }
-    }
-
-    private var statusView: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(capture.statusText, systemImage: capture.isRunning ? "checkmark.circle.fill" : "info.circle")
-                .foregroundStyle(capture.isRunning ? .green : .secondary)
-
-            Text("初回起動時に画面収録の許可が出たら許可してください。許可後はアプリの再起動が必要になることがあります。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(12)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private var directDisplayView: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("BetterDisplayの仮想画面")
-                .font(.headline)
-
-            Label(capture.directDisplayRefreshSummary, systemImage: "arrow.clockwise.circle")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            VStack(spacing: 6) {
-                ForEach(capture.directDisplays) { display in
-                    directDisplayButton(display)
-                }
-            }
-
-            HStack {
-                Button {
-                    capture.refreshDirectDisplays()
-                } label: {
-                    Label("画面候補を再読み込み", systemImage: "arrow.clockwise")
-                }
-                .help("BetterDisplayで仮想画面を作った後や、解像度を変えた後に押します。")
 
                 Button {
-                    Task { await capture.startSelectedDirectDisplay() }
+                    Task { await capture.startSelectedDisplay() }
                 } label: {
-                    Label("直接配信開始", systemImage: "play.fill")
+                    Label("手動プレビュー開始", systemImage: "play.fill")
                 }
-                .disabled(capture.selectedDirectDisplayID == nil || capture.isRunning)
+                .disabled(capture.selectedDisplayID == nil || capture.isRunning)
             }
-
-            Text("3440 x 1440のような横長画面は、実物の外部モニターである可能性が高いです。Fold用は「Galaxy Fold候補」を選びます。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Text(capture.directCaptureStatusText)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
         }
-        .padding(12)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func directDisplayButton(_ display: DirectDisplay) -> some View {
-        let isSelected = capture.selectedDirectDisplayID == display.id
-
-        return Button {
-            capture.selectedDirectDisplayID = display.id
-        } label: {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(display.name)
-                        .font(.body.weight(.semibold))
-                    if display.isRecommended {
-                        Text("おすすめ")
-                            .font(.caption2.weight(.bold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(isSelected ? .white.opacity(0.22) : Color.green.opacity(0.18), in: Capsule())
-                    }
-                }
-
-                Text(display.detail)
-                    .font(.caption)
-                    .foregroundStyle(isSelected ? .white.opacity(0.88) : .secondary)
-
-                Text(display.helpText)
-                    .font(.caption)
-                    .foregroundStyle(isSelected ? .white.opacity(0.78) : .secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(
-                isSelected ? Color.accentColor : Color.secondary.opacity(0.12),
-                in: RoundedRectangle(cornerRadius: 8)
-            )
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(isSelected ? .white : .primary)
     }
 
     private var scrcpyView: some View {
@@ -289,80 +339,116 @@ struct ContentView: View {
             .padding(.top, 6)
         } label: {
             Label("scrcpy検証", systemImage: "cable.connector")
-                .font(.headline)
+                .font(.subheadline.weight(.semibold))
         }
-        .padding(12)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private var foldConnectionView: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(capture.serverStatusText, systemImage: "network")
-                .foregroundStyle(.secondary)
+    private func directDisplayButton(_ display: DirectDisplay) -> some View {
+        let isSelected = capture.selectedDirectDisplayID == display.id
 
-            if let viewerURL = capture.primaryViewerURL {
-                Text("FoldのカメラでQRを読み取ると表示できます。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                QRCodeView(text: viewerURL)
-                    .frame(width: 156, height: 156)
-                    .frame(maxWidth: .infinity)
-
-                Text(viewerURL)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .lineLimit(2)
-                    .truncationMode(.middle)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.background, in: RoundedRectangle(cornerRadius: 8))
-
-                if capture.viewerURLs.count > 1 {
-                    Divider()
-
-                    Text("白画面になる場合は、下の別URLも試してください。")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-
-                    ForEach(capture.viewerURLs.dropFirst(), id: \.self) { url in
-                        Text(url)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                            .padding(8)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(.background, in: RoundedRectangle(cornerRadius: 8))
+        return Button {
+            capture.selectedDirectDisplayID = display.id
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(display.name)
+                        .font(.body.weight(.semibold))
+                    if display.isRecommended {
+                        Text("おすすめ")
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(isSelected ? .white.opacity(0.22) : Color.green.opacity(0.18), in: Capsule())
                     }
                 }
-            } else {
-                Text("Fold接続用URLを準備しています。")
+
+                Text(display.detail)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isSelected ? .white.opacity(0.88) : .secondary)
+
+                Text(display.helpText)
+                    .font(.caption)
+                    .foregroundStyle(isSelected ? .white.opacity(0.78) : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(
+                isSelected ? Color.accentColor : Color.secondary.opacity(0.12),
+                in: RoundedRectangle(cornerRadius: 9)
+            )
         }
-        .padding(12)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+        .buttonStyle(.plain)
+        .foregroundStyle(isSelected ? .white : .primary)
     }
 
     private var preview: some View {
         ZStack {
-            Color.black
+            LinearGradient(
+                colors: [
+                    Color(nsColor: .black),
+                    Color(nsColor: .windowBackgroundColor).opacity(0.88)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
 
             CapturePreviewView(model: capture)
                 .aspectRatio(16.0 / 10.0, contentMode: .fit)
-                .padding(24)
+                .padding(28)
+
+            VStack {
+                HStack {
+                    statusBadge
+                    Spacer()
+                }
+                Spacer()
+            }
+            .padding(20)
 
             if !capture.isRunning {
                 VStack(spacing: 10) {
                     Image(systemName: "display")
                         .font(.system(size: 44))
-                    Text("画面を選んでプレビューを開始")
+                    Text("配信する画面を選んで開始")
                         .font(.headline)
-                    Text("ここにMac画面のプレビューが表示されます。")
+                    Text("Foldへ送る映像がここに表示されます。")
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 .foregroundStyle(.white)
             }
+        }
+    }
+
+    private var statusBadge: some View {
+        Label(capture.isRunning ? "配信中" : "待機中", systemImage: capture.isRunning ? "dot.radiowaves.left.and.right" : "pause.circle")
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .foregroundStyle(.white)
+            .background(.black.opacity(0.36), in: Capsule())
+    }
+
+    private func sectionContainer<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func stepHeader(number: String, title: String, systemImage: String) -> some View {
+        HStack(spacing: 8) {
+            Text(number)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 20, height: 20)
+                .background(Color.accentColor, in: Circle())
+
+            Label(title, systemImage: systemImage)
+                .font(.headline)
         }
     }
 
