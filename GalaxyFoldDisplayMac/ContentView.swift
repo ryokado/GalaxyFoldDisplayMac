@@ -30,82 +30,53 @@ struct ContentView: View {
     }
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Galaxy Fold Display")
-                    .font(.title2.weight(.semibold))
-                Text("Macの画面を選び、FoldのChromeへ表示します。")
-                    .foregroundStyle(.secondary)
-                    .font(.subheadline)
-            }
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Galaxy Fold Display")
+                        .font(.title2.weight(.semibold))
+                    Text("Macの画面を選び、FoldのChromeへ表示します。")
+                        .foregroundStyle(.secondary)
+                        .font(.subheadline)
+                }
 
-            Button {
-                capture.startWithSystemPicker()
-            } label: {
-                Label("標準画面選択で開始", systemImage: "rectangle.on.rectangle")
-            }
-            .buttonStyle(.borderedProminent)
+                Button {
+                    capture.startWithSystemPicker()
+                } label: {
+                    Label("標準画面選択で開始", systemImage: "rectangle.on.rectangle")
+                }
+                .buttonStyle(.borderedProminent)
 
-            capturePresetView
+                capturePresetView
 
-            directDisplayView
+                directDisplayView
 
-            Button {
-                Task { await capture.refreshDisplays() }
-            } label: {
-                Label("画面一覧を手動更新", systemImage: "arrow.clockwise")
-            }
+                manualDisplayView
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("手動で共有する画面")
-                    .font(.headline)
-
-                if capture.displays.isEmpty {
-                    ContentUnavailableView(
-                        "画面一覧は未取得です",
-                        systemImage: "display",
-                        description: Text("通常は上の標準画面選択を使ってください。必要な場合だけ手動更新します。")
-                    )
-                    .frame(maxWidth: .infinity, minHeight: 180)
-                } else {
-                    List(capture.displays, selection: $capture.selectedDisplayID) { display in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(display.name)
-                                .font(.body.weight(.medium))
-                            Text(display.detail)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .tag(display.id)
+                HStack {
+                    Button {
+                        Task { await capture.startSelectedDisplay() }
+                    } label: {
+                        Label("手動プレビュー開始", systemImage: "play.fill")
                     }
-                    .frame(minHeight: 220)
+                    .disabled(capture.selectedDisplayID == nil || capture.isRunning)
+
+                    Button {
+                        Task { await capture.stop() }
+                    } label: {
+                        Label("停止", systemImage: "stop.fill")
+                    }
+                    .disabled(!capture.isRunning)
                 }
+
+                statusView
+                scrcpyView
+                foldConnectionView
             }
-
-            HStack {
-                Button {
-                    Task { await capture.startSelectedDisplay() }
-                } label: {
-                    Label("手動プレビュー開始", systemImage: "play.fill")
-                }
-                .disabled(capture.selectedDisplayID == nil || capture.isRunning)
-
-                Button {
-                    Task { await capture.stop() }
-                } label: {
-                    Label("停止", systemImage: "stop.fill")
-                }
-                .disabled(!capture.isRunning)
-            }
-
-            statusView
-            scrcpyView
-            foldConnectionView
-
-            Spacer()
+            .padding(20)
         }
-        .padding(20)
-        .frame(width: 340)
+        .scrollIndicators(.visible)
+        .frame(width: 360)
     }
 
     private var capturePresetView: some View {
@@ -132,6 +103,52 @@ struct ContentView: View {
         }
         .padding(12)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var manualDisplayView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                Task { await capture.refreshDisplays() }
+            } label: {
+                Label("画面一覧を手動更新", systemImage: "arrow.clockwise")
+            }
+
+            Text("手動で共有する画面")
+                .font(.headline)
+
+            if capture.displays.isEmpty {
+                ContentUnavailableView(
+                    "画面一覧は未取得です",
+                    systemImage: "display",
+                    description: Text("通常は上の標準画面選択を使ってください。必要な場合だけ手動更新します。")
+                )
+                .frame(maxWidth: .infinity, minHeight: 150)
+            } else {
+                VStack(spacing: 6) {
+                    ForEach(capture.displays) { display in
+                        Button {
+                            capture.selectedDisplayID = display.id
+                        } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(display.name)
+                                    .font(.body.weight(.medium))
+                                Text(display.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(capture.selectedDisplayID == display.id ? .white.opacity(0.85) : .secondary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(
+                                capture.selectedDisplayID == display.id ? Color.accentColor : Color.secondary.opacity(0.12),
+                                in: RoundedRectangle(cornerRadius: 8)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(capture.selectedDisplayID == display.id ? .white : .primary)
+                    }
+                }
+            }
+        }
     }
 
     private var statusView: some View {
