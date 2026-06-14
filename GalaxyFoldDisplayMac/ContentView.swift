@@ -168,8 +168,12 @@ struct ContentView: View {
     }
 
     private var transmissionView: some View {
-        sectionContainer {
-            stepHeader(number: "3", title: "配信", systemImage: "dot.radiowaves.left.and.right")
+        primarySectionContainer {
+            stepHeader(number: "3", title: "直接配信", systemImage: "dot.radiowaves.left.and.right")
+
+            Text("選んだBetterDisplay画面を、そのままFoldへ送ります。通常はこちらを使います。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             Picker("表示設定", selection: $capture.capturePreset) {
                 ForEach(CapturePreset.allCases) { preset in
@@ -186,10 +190,13 @@ struct ContentView: View {
                 Button {
                     Task { await capture.startSelectedDirectDisplay() }
                 } label: {
-                    Label("配信開始", systemImage: "play.fill")
+                    Label("直接配信開始", systemImage: "play.fill")
+                        .font(.headline)
                         .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
                 .disabled(capture.selectedDirectDisplayID == nil || capture.isRunning)
 
                 Button {
@@ -228,10 +235,18 @@ struct ContentView: View {
     private var advancedView: some View {
         DisclosureGroup(isExpanded: $isAdvancedExpanded) {
             VStack(alignment: .leading, spacing: 14) {
-                Button {
-                    capture.startWithSystemPicker()
-                } label: {
-                    Label("標準画面選択で開始", systemImage: "rectangle.on.rectangle")
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("直接配信が使えない時だけ使います。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        capture.startWithSystemPicker()
+                    } label: {
+                        Label("Mac標準の画面選択を使う", systemImage: "rectangle.on.rectangle")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
 
                 manualDisplayView
@@ -239,7 +254,7 @@ struct ContentView: View {
             }
             .padding(.top, 8)
         } label: {
-            Label("詳細設定", systemImage: "slider.horizontal.3")
+            Label("その他の開始方法・検証", systemImage: "slider.horizontal.3")
                 .font(.headline)
         }
         .padding(12)
@@ -437,6 +452,19 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func primarySectionContainer<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.accentColor.opacity(0.30), lineWidth: 1)
+        }
     }
 
     private func stepHeader(number: String, title: String, systemImage: String) -> some View {
