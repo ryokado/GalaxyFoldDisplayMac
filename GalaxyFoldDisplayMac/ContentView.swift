@@ -8,12 +8,27 @@
 import AppKit
 import SwiftUI
 
+private enum ViewerConnectionMode: String, CaseIterable, Identifiable {
+    case wifi
+    case usb
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .wifi: "Wi-Fi"
+        case .usb: "USB"
+        }
+    }
+}
+
 struct ContentView: View {
     @StateObject private var capture = ScreenCaptureModel()
     @StateObject private var scrcpy = ScrcpyManager()
     @State private var isAdvancedExpanded = false
     @State private var isNetworkDetailsExpanded = false
     @State private var isScrcpyExpanded = false
+    @State private var viewerConnectionMode: ViewerConnectionMode = .wifi
 
     var body: some View {
         HStack(spacing: 0) {
@@ -84,16 +99,28 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
 
             if let viewerURL = capture.primaryViewerURL {
-                Text("Galaxy Foldのカメラで読み取ります。")
+                let usbURL = capture.usbViewerURL
+                let selectedURL = viewerConnectionMode == .usb ? (usbURL ?? viewerURL) : viewerURL
+
+                if usbURL != nil {
+                    Picker("接続方法", selection: $viewerConnectionMode) {
+                        ForEach(ViewerConnectionMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                Text(viewerConnectionMode == .usb ? "USB接続中のFoldで読み取ります。" : "Galaxy Foldのカメラで読み取ります。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                QRCodeView(text: viewerURL)
+                QRCodeView(text: selectedURL)
                     .frame(width: 158, height: 158)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 2)
 
-                Text(viewerURL)
+                Text(selectedURL)
                     .font(.system(.caption, design: .monospaced))
                     .textSelection(.enabled)
                     .lineLimit(2)
@@ -101,6 +128,23 @@ struct ContentView: View {
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.background, in: RoundedRectangle(cornerRadius: 8))
+
+                if viewerConnectionMode == .usb, let reverseCommand = capture.usbReverseCommand {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("先にMacのターミナルで実行")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Text(reverseCommand)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .padding(8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(.background, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
 
                 if capture.viewerURLs.count > 1 {
                     DisclosureGroup(isExpanded: $isNetworkDetailsExpanded) {

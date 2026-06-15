@@ -117,6 +117,19 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
     @Published var serverStatusText = "Fold配信: 準備中"
     @Published var viewerURLs: [String] = []
     var primaryViewerURL: String? { viewerURLs.first }
+    var usbViewerURL: String? {
+        guard let primaryViewerURL else { return nil }
+        return Self.usbViewerURL(from: primaryViewerURL)
+    }
+    var usbReverseCommand: String? {
+        guard let primaryViewerURL,
+              let url = URL(string: primaryViewerURL),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let port = components.port else {
+            return nil
+        }
+        return "adb reverse tcp:\(port) tcp:\(port)"
+    }
     @Published var isShowingError = false
     @Published var errorMessage = ""
 
@@ -575,6 +588,16 @@ final class ScreenCaptureModel: NSObject, ObservableObject {
             return x > 0 ? "右側に配置" : "左側に配置"
         }
         return y > 0 ? "下側に配置" : "上側に配置"
+    }
+
+    private static func usbViewerURL(from viewerURL: String) -> String? {
+        guard let url = URL(string: viewerURL),
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+
+        components.host = "127.0.0.1"
+        return components.url?.absoluteString
     }
 
     private func scaledDimensions(width: Int, height: Int, maxWidth: Int) -> (width: Int, height: Int) {
